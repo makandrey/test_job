@@ -1,0 +1,157 @@
+##################################################
+# LEMP on Ubuntu
+##################################################
+---
+- hosts: all
+  become: true
+  vars_files:
+    - vars/default.yml
+
+  tasks:
+    - name: Install Prerequisites
+      apt: name={{ item }} update_cache=yes state=latest force_apt_get=yes
+      loop: [ 'aptitude' ]
+
+    - name: Install LEMP Packages
+      apt: name={{ item }} update_cache=yes state=latest
+      loop: [ 'nginx', 'mysql-server', 'python3-pymysql', 'php7.4-fpm', 'php7.4-mysql', 'composer' ]
+    
+# Nginx Configuration
+    - name: Sets Nginx conf file
+      template:
+        src: "files/nginx.conf.j2"
+        dest: "/etc/nginx/sites-available/{{ http_conf }}"
+      notify: Reload Nginx
+
+    - name: Enables new site
+      file:
+        src: "/etc/nginx/sites-available/{{ http_conf }}"
+        dest: "/etc/nginx/sites-enabled/{{ http_conf }}"
+        state: link
+      notify: Reload Nginx
+    
+    - name: Removes "default" site
+      file:
+        path: "/etc/nginx/sites-enabled/default"
+        state: absent
+      notify: Reload Nginx
+
+# MySQL Configuration
+    - name: Sets the root password 
+      mysql_user: 
+        name: root 
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        password: "{{ mysql_root_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Removes all anonymous user accounts
+      mysql_user:
+        name: ''
+        host_all: yes
+        state: absent
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Removes the MySQL test database
+      mysql_db: 
+        name: test 
+        state: absent
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+# UFW Configuration
+    - name: "UFW - Allow HTTP on port {{ http_port }}"
+      ufw:
+        rule: allow
+        port: "{{ http_port }}"
+        proto: tcp
+
+# UFW Configuration
+    - name: "UFW - Allow SSH on port {{ ssh_port }}"
+      ufw:
+        rule: allow
+        port: "{{ ssh_port }}"
+        proto: tcp
+
+# UFW Configuration
+    - name: "UFW - Allow HTTPS on port {{ https_port }}"
+      ufw:
+        rule: allow
+        port: "{{ https_port }}"
+        proto: tcp
+
+# UFW Configuration
+    - name: "UFW - Deny incoming"
+      ufw:
+        direction: incoming
+        policy: deny
+
+# UFW Configuration
+    - name: "UFW - Allow outcomming"
+      ufw:    
+        direction: outgoing
+        policy: allow
+
+# UFW Configuration
+    - name: "UFW - Deny routed"
+      ufw:
+        direction: routed
+        policy: deny
+
+# UFW Configuration
+    - name: "UFW - Enable and deny by default"
+      ufw:
+        state: enabled
+
+# Create www
+    - name: create /var/www/ directory
+      file:
+        dest=/var/www/ 
+        state=directory 
+        owner=www-data 
+        group=www-data 
+        mode=0700
+      notify: Reload Nginx
+
+# Git clone laravel
+    - name: Clone git repository
+      git:
+        dest=/var/www/laravel
+        repo=https://github.com/laravel/laravel.git
+        update=no
+
+# Add user "ubuntu"
+    - name: Add user to remote hosts
+      user: 
+        name: ubuntu
+        groups: sudo 
+        shell: /bin/bash
+        password: "{{ 'Gok,7Pom' | password_hash('sha512') }}" 
+
+# Allow NOPASSWD for "ubuntu"
+    - name: Allow 'wheel' group to have passwordless sudo
+      lineinfile:
+        dest: /etc/sudoers
+        state: present
+        regexp: '^%ubuntu'
+        line: '%ubuntu ALL=(ALL) NOPASSWD: ALL'
+        validate: 'visudo -cf %s' 
+
+# Add SSH keys to remote hosts
+    - name: Add SSH keys to remote hosts
+      authorized_key:
+        user: ubuntu
+        state: present
+        key: "{{ lookup('file', 'key.pub') }}"
+
+  handlers:
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
